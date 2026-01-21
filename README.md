@@ -45,6 +45,17 @@ uvicorn main:app --reload
 
 The API will be available at `http://localhost:8000`
 
+## Docker (Hugging Face Spaces)
+
+This repo includes a Dockerfile that builds the React frontend and serves it via FastAPI.
+
+```bash
+docker build -t ai-interviewer-agent .
+docker run -p 7860:7860 --env PORT=7860 ai-interviewer-agent
+```
+
+Open `http://localhost:7860`
+
 ## Solution Narrative
 
 **Alex — Hands-Free AI Technical Interviewer**

@@ -1,5 +1,9 @@
+import os
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict, Optional, Union
 
@@ -18,6 +22,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
 # In-memory interview sessions (session_id -> InterviewAgent)
 sessions: Dict[str, InterviewAgent] = {}
 
@@ -34,6 +42,9 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Root endpoint"""
+    index_path = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
     return {"message": "AI Interview Agent API"}
 
 
