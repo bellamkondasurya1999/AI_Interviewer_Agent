@@ -83,7 +83,7 @@ is hands-free: it listens, waits for silence, responds, and resumes listening au
 ## Demo Video
 
 Add your demo link here:
-- https://youtu.be/REPLACE_WITH_DEMO
+- https://www.youtube.com/watch?v=e9x58Xo7hFQ&feature=youtu.be
 
 ## Repository
 
