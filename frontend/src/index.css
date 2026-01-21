@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Scrollbar for the Chat */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #4f46e5;
+  border-radius: 10px;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.pulse-dot {
+  position: relative;
+  display: inline-flex;
+  height: 10px;
+  width: 10px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.7);
+}
+
+.pulse-dot--active::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  animation: pulse-ring 1.6s infinite;
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, #22d3ee, #2563eb);
+  animation: typing-bounce 0.9s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.mic-pulse {
+  position: relative;
+  box-shadow: 0 0 0 rgba(244, 63, 94, 0.35);
+}
+
+.mic-pulse--active {
+  background: rgba(244, 63, 94, 0.3);
+}
+
+.mic-pulse--active::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 63, 94, 0.6);
+  animation: mic-pulse 1.2s infinite ease-out;
+}
+
+.particle-layer {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(129, 140, 248, 0.15) 1px, transparent 1px);
+  background-size: 120px 120px;
+  opacity: 0.25;
+  animation: drift 22s linear infinite;
+}
+
+@keyframes typing-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+@keyframes mic-pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-120px, 120px, 0);
+  }
+}
