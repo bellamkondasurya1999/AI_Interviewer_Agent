@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Bot, UploadCloud, User, Volume2, VolumeX } from 'lucide-react'
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth'
 import FinalReportModal from './FinalReportModal'
 import Visualizer from './Visualizer'
 import VoiceOrb from './VoiceOrb'
+import { auth } from './firebase'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 function App() {
   const [messages, setMessages] = useState([])
+  const [authUser, setAuthUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authError, setAuthError] = useState('')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [isSigningUp, setIsSigningUp] = useState(false)
   const [metrics, setMetrics] = useState({
     average_technical_accuracy: 0,
     average_communication_clarity: 0,
@@ -34,6 +47,7 @@ function App() {
   const [hasStarted, setHasStarted] = useState(false)
   const [interviewTerminated, setInterviewTerminated] = useState(false)
   const [sessionId, setSessionId] = useState(null)
+  const [resumeId, setResumeId] = useState(null)
   const [candidateProfile, setCandidateProfile] = useState(null)
   const bottomRef = useRef(null)
   const previousMessageCount = useRef(0)
@@ -65,7 +79,7 @@ function App() {
     return voices
   }, [findMaleVoice])
 
-  // VoiceManager: text-to-speech output for Alex.
+  // VoiceManager: text-to-speech output for Sura.
   const speakText = useCallback(
     (text) => {
       if (!text || isSpeakerMuted || !('speechSynthesis' in window)) return
@@ -208,12 +222,72 @@ function App() {
     }, 1500)
   }, [isRecording, liveTranscript])
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user)
+      setAuthLoading(false)
+    })
+    return () => unsubscribe()
+  }, [])
+
+  const resetInterviewState = () => {
+    setMessages([])
+    setSessionId(null)
+    setResumeId(null)
+    setCandidateProfile(null)
+    setHasStarted(false)
+    setInterviewTerminated(false)
+    setFinalReport({
+      overall_verdict: 'No Hire',
+      key_strengths: [],
+      critical_gaps: [],
+      culture_fit_score: 0,
+    })
+    setShowFinalize(false)
+    setMetrics({
+      average_technical_accuracy: 0,
+      average_communication_clarity: 0,
+      average_confidence_score: 0,
+      average_confidence_label: 'Low',
+    })
+  }
+
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault()
+    setAuthError('')
+    try {
+      if (isSigningUp) {
+        await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword)
+      } else {
+        await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword)
+      }
+    } catch (error) {
+      setAuthError(error?.message || 'Authentication failed')
+    }
+  }
+
+  const handleSignOut = async () => {
+    await signOut(auth)
+    resetInterviewState()
+  }
+
+  const getAuthHeaders = async () => {
+    if (!authUser) return {}
+    const token = await authUser.getIdToken()
+    return { Authorization: `Bearer ${token}` }
+  }
+
   const uploadResume = async (file) => {
+    if (!authUser) {
+      throw new Error('Please sign in to upload a resume.')
+    }
     const formData = new FormData()
     formData.append('file', file)
+    const authHeaders = await getAuthHeaders()
     const response = await fetch(`${API_BASE}/upload-resume`, {
       method: 'POST',
       body: formData,
+      headers: authHeaders,
     })
     if (!response.ok) {
       const errorText = await response.text()
@@ -223,11 +297,13 @@ function App() {
   }
 
   const startInterview = async (profile) => {
+    const authHeaders = await getAuthHeaders()
     const response = await fetch(`${API_BASE}/start-interview`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
         candidate_profile: profile,
+        resume_id: resumeId,
         job_description: '',
       }),
     })
@@ -238,9 +314,10 @@ function App() {
   }
 
   const sendMessage = async (text) => {
+    const authHeaders = await getAuthHeaders()
     const response = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
         session_id: sessionId,
         user_text: text,
@@ -256,7 +333,10 @@ function App() {
     if (!sessionId || isFinalizing) return
     setIsFinalizing(true)
     try {
-      const response = await fetch(`${API_BASE}/session/report/${sessionId}`)
+      const authHeaders = await getAuthHeaders()
+      const response = await fetch(`${API_BASE}/session/report/${sessionId}`, {
+        headers: authHeaders,
+      })
       if (!response.ok) {
         throw new Error('Finalize failed')
       }
@@ -289,7 +369,10 @@ function App() {
   const fetchMetrics = async (id) => {
     if (!id) return
     try {
-      const response = await fetch(`${API_BASE}/session/metrics/${id}`)
+      const authHeaders = await getAuthHeaders()
+      const response = await fetch(`${API_BASE}/session/metrics/${id}`, {
+        headers: authHeaders,
+      })
       if (!response.ok) {
         throw new Error('Metrics fetch failed')
       }
@@ -306,7 +389,11 @@ function App() {
     event.target.value = ''
     setIsUploading(true)
     try {
-      const profile = await uploadResume(file)
+      const uploadResponse = await uploadResume(file)
+      const profile = uploadResponse.profile || uploadResponse
+      if (uploadResponse.resume_id) {
+        setResumeId(uploadResponse.resume_id)
+      }
       setCandidateProfile(profile)
       const { session_id, message } = await startInterview(profile)
       hasAutoFinalizedRef.current = false
@@ -479,6 +566,65 @@ function App() {
     startListening()
   }, [sessionId, isSpeechSupported, hasStarted, interviewTerminated, isRecording, isSpeaking, isTyping])
 
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100">
+        Loading...
+      </div>
+    )
+  }
+
+  if (!authUser) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl shadow-indigo-500/20">
+          <h1 className="text-xl font-semibold text-white">
+            {isSigningUp ? 'Create account' : 'Sign in'}
+          </h1>
+          <p className="mt-2 text-sm text-slate-300">
+            Use your email and password to continue.
+          </p>
+          <form className="mt-6 space-y-4" onSubmit={handleAuthSubmit}>
+            <div>
+              <label className="text-xs uppercase tracking-wide text-slate-400">Email</label>
+              <input
+                type="email"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-wide text-slate-400">Password</label>
+              <input
+                type="password"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                required
+              />
+            </div>
+            {authError && <p className="text-sm text-rose-300">{authError}</p>}
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400"
+            >
+              {isSigningUp ? 'Create account' : 'Sign in'}
+            </button>
+          </form>
+          <button
+            type="button"
+            className="mt-4 text-sm text-slate-300 underline underline-offset-4"
+            onClick={() => setIsSigningUp((prev) => !prev)}
+          >
+            {isSigningUp ? 'Already have an account? Sign in' : 'New here? Create an account'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="relative min-h-screen bg-slate-900 text-slate-100">
       <div className="absolute inset-0">
@@ -550,7 +696,7 @@ function App() {
             <div>
               <div className="flex items-center gap-3">
                 <span className={`pulse-dot ${isTyping ? 'pulse-dot--active' : ''}`} />
-                <h2 className="text-lg font-semibold">Alex • Lead Engineer</h2>
+                <h2 className="text-lg font-semibold">Sura • Lead Engineer</h2>
               </div>
               <p className="text-sm text-slate-400">Behavioral + Technical Interview</p>
             </div>
@@ -575,6 +721,13 @@ function App() {
                   <Volume2 className="h-4 w-4 text-emerald-200" />
                 )}
                 Speaker
+              </button>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200 transition hover:bg-white/10"
+              >
+                Sign out
               </button>
               <button
                 type="button"
@@ -649,7 +802,7 @@ function App() {
                 : isProcessing
                   ? 'Thinking...'
                   : isSpeaking
-                    ? 'Alex is speaking...'
+                    ? 'Sura is speaking...'
                     : 'Ready'}
             </p>
             <div

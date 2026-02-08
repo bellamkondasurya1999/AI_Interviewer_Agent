@@ -1,17 +1,24 @@
+import argparse
 import os
+import threading
+import time
+from uuid import uuid4
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Any
 
 from dotenv import load_dotenv
+from firebase_admin import firestore as firebase_firestore
 
 from app.schema.candidate import CandidateProfile
 from app.services.interviewer import InterviewAgent
 from app.services.processor import analyze_resume
+from app.services.firebase import get_firestore_client, verify_id_token, ensure_user_document
+from app.services.storage import upload_resume_file
 from app.utils.resume_parser import extract_text_from_pdf, extract_text_from_docx
 
 load_dotenv()
@@ -28,6 +35,7 @@ if os.path.isdir(FRONTEND_DIST):
 
 # In-memory interview sessions (session_id -> InterviewAgent)
 sessions: Dict[str, InterviewAgent] = {}
+session_meta: Dict[str, Dict[str, Optional[str]]] = {}
 
 # Enable CORS for React frontend
 app.add_middleware(
@@ -57,8 +65,28 @@ async def health_check():
     }
 
 
+def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization token.")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = verify_id_token(token)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.") from exc
+
+    user_id = claims.get("uid")
+    email = claims.get("email")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload.")
+    ensure_user_document(user_id, email)
+    return {"user_id": user_id, "email": email}
+
+
 @app.post("/upload-resume")
-async def upload_resume(file: UploadFile = File(...)):
+async def upload_resume(
+    file: UploadFile = File(...),
+    user: Dict[str, Any] = Depends(get_current_user),
+):
     """
     Upload resume endpoint - accepts PDF or DOCX files
     """
@@ -86,7 +114,28 @@ async def upload_resume(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     profile = analyze_resume(resume_text)
-    return profile
+    storage_path = upload_resume_file(
+        user_id=user["user_id"],
+        filename=file.filename or "resume",
+        content_type=file.content_type,
+        file_bytes=file_bytes,
+    )
+
+    db = get_firestore_client()
+    doc_ref = db.collection("resumes").document()
+    doc_ref.set(
+        {
+            "user_id": user["user_id"],
+            "storage_path": storage_path,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size_bytes": len(file_bytes),
+            "extracted_text": resume_text,
+            "profile_json": profile.model_dump(),
+            "created_at": firebase_firestore.SERVER_TIMESTAMP,
+        }
+    )
+    return {"resume_id": doc_ref.id, "profile": profile}
 
 
 class ChatRequest(BaseModel):
@@ -95,8 +144,9 @@ class ChatRequest(BaseModel):
 
 
 class StartInterviewRequest(BaseModel):
-    candidate_profile: CandidateProfile
+    candidate_profile: Optional[CandidateProfile] = None
     job_description: Optional[str] = None
+    resume_id: Optional[str] = None
 
 
 class FinalizeRequest(BaseModel):
@@ -104,37 +154,75 @@ class FinalizeRequest(BaseModel):
 
 
 @app.post("/start-interview")
-async def start_interview(request: Union[StartInterviewRequest, CandidateProfile]):
-    session_id = str(len(sessions) + 1)
+async def start_interview(
+    request: Union[StartInterviewRequest, CandidateProfile],
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    session_id = str(uuid4())
+    job_description = ""
+    resume_id: Optional[str] = None
+
     if isinstance(request, CandidateProfile):
         candidate_profile = request
-        job_description = ""
     else:
-        candidate_profile = request.candidate_profile
         job_description = request.job_description or ""
+        resume_id = request.resume_id
+        candidate_profile = request.candidate_profile
+        if resume_id:
+            db = get_firestore_client()
+            resume_doc = db.collection("resumes").document(resume_id).get()
+            if not resume_doc.exists:
+                raise HTTPException(status_code=404, detail="Resume not found.")
+            resume_data = resume_doc.to_dict() or {}
+            if resume_data.get("user_id") != user["user_id"]:
+                raise HTTPException(status_code=403, detail="Resume access denied.")
+            profile_json = resume_data.get("profile_json")
+            if not profile_json:
+                raise HTTPException(status_code=400, detail="Resume profile is missing.")
+            candidate_profile = CandidateProfile(**profile_json)
+
+    if candidate_profile is None:
+        raise HTTPException(status_code=400, detail="Candidate profile is required.")
 
     agent = InterviewAgent(candidate_profile, job_description=job_description)
     sessions[session_id] = agent
+    session_meta[session_id] = {"user_id": user["user_id"], "resume_id": resume_id}
+
+    db = get_firestore_client()
+    db.collection("interview_sessions").document(session_id).set(
+        {
+            "user_id": user["user_id"],
+            "resume_id": resume_id,
+            "job_description": job_description,
+            "started_at": firebase_firestore.SERVER_TIMESTAMP,
+        }
+    )
 
     opening_message = agent.get_next_response(user_input=None)
     return {"session_id": session_id, "message": opening_message}
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user: Dict[str, Any] = Depends(get_current_user)):
     agent = sessions.get(request.session_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Session not found.")
+    meta = session_meta.get(request.session_id) or {}
+    if meta.get("user_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Session access denied.")
 
     response = agent.get_next_response(request.user_text)
     return {"session_id": request.session_id, "message": response}
 
 
 @app.get("/session/metrics/{session_id}")
-async def session_metrics(session_id: str):
+async def session_metrics(session_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     agent = sessions.get(session_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Session not found.")
+    meta = session_meta.get(session_id) or {}
+    if meta.get("user_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Session access denied.")
 
     evaluations = agent.turn_evaluations
     if not evaluations:
@@ -167,12 +255,23 @@ async def session_metrics(session_id: str):
 
 
 @app.post("/finalize")
-async def finalize_interview(request: FinalizeRequest):
+async def finalize_interview(request: FinalizeRequest, user: Dict[str, Any] = Depends(get_current_user)):
     agent = sessions.get(request.session_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Session not found.")
+    meta = session_meta.get(request.session_id) or {}
+    if meta.get("user_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Session access denied.")
 
     report = agent.generate_final_report()
+    db = get_firestore_client()
+    db.collection("interview_sessions").document(request.session_id).set(
+        {
+            "ended_at": firebase_firestore.SERVER_TIMESTAMP,
+            "final_report": report.model_dump(),
+        },
+        merge=True,
+    )
     return {
         "session_id": request.session_id,
         "strengths": report.strengths,
@@ -181,12 +280,23 @@ async def finalize_interview(request: FinalizeRequest):
 
 
 @app.get("/session/report/{session_id}")
-async def session_report(session_id: str):
+async def session_report(session_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     agent = sessions.get(session_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Session not found.")
+    meta = session_meta.get(session_id) or {}
+    if meta.get("user_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Session access denied.")
 
     report = agent.finalize_interview()
+    db = get_firestore_client()
+    db.collection("interview_sessions").document(session_id).set(
+        {
+            "ended_at": firebase_firestore.SERVER_TIMESTAMP,
+            "summary_report": report.model_dump(),
+        },
+        merge=True,
+    )
     return {
         "session_id": session_id,
         "overall_verdict": report.overall_verdict,
@@ -197,6 +307,80 @@ async def session_report(session_id: str):
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    def run_server() -> None:
+        import uvicorn
 
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    def _start_test_server(host: str, port: int):
+        import uvicorn
+
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        for _ in range(50):
+            if server.started:
+                break
+            time.sleep(0.1)
+        return server, thread
+
+    def run_all() -> int:
+        print("Running all project checks...\n")
+        root_dir = os.path.dirname(__file__)
+        ran_any = False
+        exit_code = 0
+
+        if os.path.isfile(os.path.join(root_dir, "verify_system.py")):
+            ran_any = True
+            try:
+                from verify_system import run_smoke_test
+
+                smoke_code = run_smoke_test()
+                exit_code = max(exit_code, smoke_code)
+            except Exception as exc:
+                print(f"Smoke test failed: {exc}")
+                exit_code = 1
+        else:
+            print("Skipping smoke test: verify_system.py not found.")
+
+        if os.path.isfile(os.path.join(root_dir, "test_day1.py")):
+            ran_any = True
+            host = "127.0.0.1"
+            port = 8001
+            os.environ["API_BASE_URL"] = f"http://{host}:{port}"
+            server, thread = _start_test_server(host, port)
+            if not server.started:
+                print("Failed to start local API server for test_day1.")
+                return 1
+
+            try:
+                from test_day1 import main as test_day1_main
+
+                test_code = test_day1_main()
+                exit_code = max(exit_code, test_code)
+            except Exception as exc:
+                print(f"test_day1 failed: {exc}")
+                exit_code = 1
+            finally:
+                server.should_exit = True
+                thread.join(timeout=5)
+        else:
+            print("Skipping test_day1: test_day1.py not found.")
+
+        if not ran_any:
+            print("No local checks found. Starting API server instead.\n")
+            run_server()
+            return 0
+
+        return exit_code
+
+    parser = argparse.ArgumentParser(description="AI Interview Agent runner")
+    parser.add_argument("--serve", action="store_true", help="Run the API server only")
+    parser.add_argument("--run-all", action="store_true", help="Run all local checks and demos")
+    args = parser.parse_args()
+
+    if args.serve:
+        run_server()
+    else:
+        raise SystemExit(run_all())

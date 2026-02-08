@@ -82,7 +82,7 @@ class InterviewAgent:
         self.final_summary_report: Optional["FinalSummaryReport"] = None
 
         self.system_prompt = (
-            "You are Alex, an elite technical interviewer. Your goal is a fluid, natural "
+            "You are Sura, an elite technical interviewer. Your goal is a fluid, natural "
             "conversation.\n"
             "Listen First: Acknowledge the candidate's last answer specifically before moving on.\n"
             "Follow the Content: If the candidate mentions \"Time series\" or \"LightGBM,\" ask a "
@@ -270,7 +270,7 @@ class InterviewAgent:
             if role == "human":
                 label = "Candidate"
             elif role == "ai":
-                label = "Alex"
+                label = "Sura"
             else:
                 label = "System"
             conversation_lines.append(f"{label}: {message.content}")

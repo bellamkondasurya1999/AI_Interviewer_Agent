@@ -36,6 +36,18 @@ pip install -r requirements.txt
    - Open `.env` in the project root
    - Set `OPENAI_API_KEY=your_openai_api_key_here`
    - Remove `OPENAI_BASE_URL` / `OPENAI_API_BASE` if present (OpenAI only)
+   - Firebase Admin (backend):
+     - `FIREBASE_PROJECT_ID=...`
+     - `FIREBASE_CLIENT_EMAIL=...`
+     - `FIREBASE_PRIVATE_KEY=...` (use `\\n` for newlines)
+     - `FIREBASE_STORAGE_BUCKET=...`
+   - Firebase Web (frontend `.env` inside `frontend/`):
+     - `VITE_FIREBASE_API_KEY=...`
+     - `VITE_FIREBASE_AUTH_DOMAIN=...`
+     - `VITE_FIREBASE_PROJECT_ID=...`
+     - `VITE_FIREBASE_STORAGE_BUCKET=...`
+     - `VITE_FIREBASE_MESSAGING_SENDER_ID=...`
+     - `VITE_FIREBASE_APP_ID=...`
 
 ## Running the Application
 
@@ -58,19 +70,19 @@ Open `http://localhost:7860`
 
 ## Solution Narrative
 
-**Alex — Hands-Free AI Technical Interviewer**
+**Sura — Hands-Free AI Technical Interviewer**
 
 **Problem:** Most interview prep tools feel scripted and repetitive. They fail to adapt to a
 candidate's resume and live responses.
 
-**Solution:** Alex is a conversational technical interviewer that uses full session memory to
+**Solution:** Sura is a conversational technical interviewer that uses full session memory to
 avoid repetition and dynamically deep-dive into technologies a candidate mentions. The system
 is hands-free: it listens, waits for silence, responds, and resumes listening automatically.
 
 **How it works:**
 - Resume upload is parsed into a structured candidate profile.
 - Each interview session stores all messages; the model sees the full history every turn.
-- Alex acknowledges the last answer and asks a focused follow-up based on that content.
+- Sura acknowledges the last answer and asks a focused follow-up based on that content.
 - The frontend uses voice input and speech synthesis to create a natural dialogue loop.
 - The UI provides real-time visual feedback via a responsive Voice Orb.
 
