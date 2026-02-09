@@ -113,3 +113,11 @@ Once the server is running, visit:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
+## Uptime Monitoring (Recommended)
+
+Set up a free uptime check (e.g., UptimeRobot) against:
+- `https://suraapp.com/` (frontend)
+- `https://<your-cloud-run-url>/health` (backend)
+
+This gives you alerts if the site or API goes down.
+

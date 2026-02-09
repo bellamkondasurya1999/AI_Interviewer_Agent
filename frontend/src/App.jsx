@@ -578,11 +578,14 @@ function App() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900 text-slate-100">
         <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl shadow-indigo-500/20">
+          <div className="mb-4 rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-xs uppercase tracking-[0.3em] text-indigo-200">
+            Sura
+          </div>
           <h1 className="text-xl font-semibold text-white">
             {isSigningUp ? 'Create account' : 'Sign in'}
           </h1>
           <p className="mt-2 text-sm text-slate-300">
-            Use your email and password to continue.
+            Upload a resume, interview live, and get structured feedback in minutes.
           </p>
           <form className="mt-6 space-y-4" onSubmit={handleAuthSubmit}>
             <div>
